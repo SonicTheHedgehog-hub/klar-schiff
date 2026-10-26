@@ -20,6 +20,35 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div id="splash" hidden aria-hidden="true">
+  <svg class="sea" viewBox="0 0 360 230" role="img" aria-label="Eine kleine Yacht segelt über die Wellen">
+    <g class="sun"><circle cx="292" cy="54" r="22"/></g>
+    <g class="bird"><path d="M64 60q6-6 12 0q6-6 12 0"/><path d="M96 44q4-4 8 0q4-4 8 0"/></g>
+    <g class="wave back"><path d="M0 150 Q 45 136 90 150 T 180 150 T 270 150 T 360 150 T 450 150 T 540 150 T 630 150 T 720 150 V 230 H 0 Z"/></g>
+    <g class="boat-move"><g class="boat">
+      <path class="flag" d="M181 34 l15 5 -15 5z"/>
+      <line class="mast" x1="181" y1="34" x2="181" y2="144"/>
+      <path class="main" d="M177 46 L177 136 L121 136 Z"/>
+      <path class="jib" d="M185 54 L185 132 L229 132 Z"/>
+      <path class="hull" d="M114 142 H 248 L 230 164 Q 180 172 132 164 Z"/>
+      <rect class="cabin" x="160" y="132" width="44" height="10" rx="3"/>
+      <circle class="porthole" cx="152" cy="153" r="3"/><circle class="porthole" cx="168" cy="154" r="3"/><circle class="porthole" cx="184" cy="154" r="3"/>
+    </g></g>
+    <g class="wave front"><path d="M0 166 Q 45 154 90 166 T 180 166 T 270 166 T 360 166 T 450 166 T 540 166 T 630 166 T 720 166 V 230 H 0 Z"/></g>
+  </svg>
+  <div class="splash-name">Klar Schiff</div>
+  <div class="splash-sub">Leinen los für heute</div>
+</div>
+<script>
+  // Yacht nur beim ersten Öffnen des Tages zeigen.
+  try {
+    var day = JSON.stringify(new Date().toDateString());
+    if (localStorage.getItem('ks-splash') !== day) {
+      localStorage.setItem('ks-splash', day);
+      var sp = document.getElementById('splash'); sp.hidden = false; sp.dataset.t = Date.now();
+    }
+  } catch (e) {}
+</script>
 <div class="app">
   <header class="top">
     <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M5 13a7 7 0 0 0 14 0M8 10h8"/></svg>Klar Schiff</div>

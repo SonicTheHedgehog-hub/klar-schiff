@@ -115,7 +115,34 @@ async function cron() {
       sent += await send([s], { title: "Heute bei Klar Schiff", body, tag: "daily", badge: mine.length });
     }
   }
-  return { checked: (subs || []).length, sent };
+  return { checked: (subs || []).length, sent, ready: await readyAlerts() };
+}
+
+// Folgeaufgaben mit Wartezeit (z. B. Wäsche aufhängen 2 Std. nach dem Waschen): Bescheid geben, sobald es so weit ist.
+async function readyAlerts() {
+  const { data: deps } = await sb.from("tasks").select("id, name, household_id, after_task, after_delay_min, last_done, ready_notified_at, mode, person, claimed_by")
+    .not("after_task", "is", null).gte("after_delay_min", 30);
+  if (!deps?.length) return 0;
+  const { data: preds } = await sb.from("tasks").select("id, name, last_done, last_by").in("id", [...new Set(deps.map((d) => d.after_task))]);
+  const byId = new Map((preds || []).map((p) => [p.id, p]));
+  const now = Date.now();
+  let sent = 0;
+  for (const t of deps) {
+    const p = byId.get(t.after_task);
+    if (!p?.last_done) continue;
+    const predAt = Date.parse(p.last_done), ownAt = t.last_done ? Date.parse(t.last_done) : 0;
+    if (predAt <= ownAt) continue;                                   // noch nicht ausgelöst
+    const readyAt = predAt + t.after_delay_min * 60000;
+    if (readyAt > now || readyAt < now - 6 * 3600000) continue;      // noch nicht so weit oder zu lange her
+    if (t.ready_notified_at && Date.parse(t.ready_notified_at) >= readyAt) continue;
+    await sb.from("tasks").update({ ready_notified_at: new Date().toISOString() }).eq("id", t.id);
+    const who = t.claimed_by || (t.mode === "fixed" ? t.person : t.mode === "open" ? null : p.last_by);
+    let q = sb.from("push_subscriptions").select("*").eq("household_id", t.household_id);
+    if (who) q = q.eq("member_id", who);
+    const { data: subs } = await q;
+    sent += await send(subs || [], { title: `Jetzt dran: ${t.name}`, body: `„${p.name}“ ist fertig.`, tag: "ready-" + t.id });
+  }
+  return sent;
 }
 
 Deno.serve(async (req) => {

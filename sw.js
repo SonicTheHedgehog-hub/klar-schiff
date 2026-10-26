@@ -1,5 +1,5 @@
 // Klar Schiff – Service Worker: Offline-Nutzung und Push-Nachrichten.
-const CACHE = 'klar-schiff-v2';
+const CACHE = 'klar-schiff-v3';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './plan.js', './catalog.js', './config.js',
   './vendor/supabase.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png'];
 

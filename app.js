@@ -1,6 +1,6 @@
 // Klar Schiff – App
-import { TYPES, USER_ROOMS, FREQS, MODES, MODE_HELP } from './catalog.js';
-import { D, startOfDay, dayDiff, pts, dueAt, cleanOf, planDays } from './plan.js';
+import { TYPES, USER_ROOMS, FREQS, MODES, MODE_HELP, CHAINS, DELAYS } from './catalog.js';
+import { D, startOfDay, dayDiff, pts, dueAt, cleanOf, planDays, annotate, isHidden } from './plan.js';
 import { CONFIG } from './config.js';
 
 /* ---------- Icons ---------- */
@@ -19,7 +19,11 @@ const I = {
   back:'<path d="m15 18-6-6 6-6"/>',
   edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   share:'<path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>',
-  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>'
+  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  bolt:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>'
 };
 const svg = (k, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${I[k] || I.other}</svg>`;
 
@@ -50,6 +54,7 @@ const S = {
   phase: 'loading', authMode: 'login', authErr: '', authMsg: '', onboardTab: 'create', onboardErr: '',
   uid: null, email: '', household: null, members: [], rooms: [], tasks: [], done: [], meId: null,
   view: 'today', roomId: null, filter: 'all', range: 7, openTips: new Set(), showDone: false, busy: new Set(),
+  showSpare: false, spare: 0,
   online: navigator.onLine, pushOn: false
 };
 const HID = () => S.household?.id;
@@ -102,6 +107,9 @@ function applyLocal(op) {
   } else if (op.k === 'delete') {
     S[key] = S[key].filter(x => x.id !== op.id);
     if (op.table === 'rooms') S.tasks = S.tasks.filter(t => t.room_id !== op.id);
+    // Wie in der Datenbank (on delete set null): Folgeaufgaben verlieren ihren gelöschten Vorgänger.
+    const gone = new Set(op.table === 'tasks' ? [op.id] : []);
+    S.tasks.forEach(t => { if (t.after_task && (gone.has(t.after_task) || !S.tasks.some(x => x.id === t.after_task))) t.after_task = null; });
   }
 }
 
@@ -198,6 +206,7 @@ async function refetch() {
     S.phase = 'app';
     listen(me.household_id);
     render(true);
+    pruneOneOffs();
   } finally { fetching = false; updateSync(); }
 }
 
@@ -218,8 +227,24 @@ function plan(days = 7) {
   const roomOrder = {}; S.rooms.forEach((r, i) => roomOrder[r.id] = r.sort ?? i);
   return planDays({ tasks: S.tasks, members: S.members, completions: S.done, roomOrder, vacation: vacation(), days });
 }
-function roomClean(rid) { const ts = S.tasks.filter(t => t.room_id === rid); return ts.length ? ts.reduce((a, t) => a + cleanOf(t, NOW()), 0) / ts.length : 1; }
+function roomClean(rid) { const ts = S.tasks.filter(t => t.room_id === rid && !isHidden(t)); return ts.length ? ts.reduce((a, t) => a + cleanOf(t, NOW()), 0) / ts.length : 1; }
+const hhmm = ms => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const delayLabel = m => (DELAYS.find(x => x[0] === +m) || [0, `${m} Min`])[1];
+function chainLabel(t) {
+  const c = t.chain;
+  if (!c.triggered) return `wartet auf „${esc(c.pred.name)}“${+t.after_delay_min ? ` (+${delayLabel(t.after_delay_min)})` : ''}`;
+  if (c.waiting) return `<span class="due-today">ab ${dayDiff(sod(c.readyAt), sod(Date.now())) > 0 ? WD[new Date(c.readyAt).getDay()] + ' ' : ''}${hhmm(c.readyAt)} Uhr</span>`;
+  return null;
+}
+let pruned = false;
+function pruneOneOffs() {
+  if (pruned) return; pruned = true;
+  const old = S.tasks.filter(t => t.one_off && t.last && t.last < Date.now() - 14 * D);
+  if (old.length) mutate(old.map(t => ({ k: 'delete', table: 'tasks', id: t.id })));
+}
 function dueLabel(t) {
+  if (t.chain) { const l = chainLabel(t); if (l) return l; }
+  if (t.one_off) return t.last ? 'erledigt' : '<span class="due-today">einmalig</span>';
   const diff = dayDiff(sod(dueAt(t)), sod(Date.now()));
   if (diff < 0) return `<span class="due-over">seit ${-diff} ${-diff === 1 ? 'Tag' : 'Tagen'} fällig</span>`;
   if (diff === 0) return '<span class="due-today">heute</span>';
@@ -235,6 +260,7 @@ function render(soft) {
   const ae = document.activeElement;
   if (soft && ae && $view.contains(ae) && ae.matches('input,textarea,select')) { deferred = true; return; }
   deferred = false;
+  annotate(S.tasks, NOW());
   const inApp = S.phase === 'app';
   document.getElementById('tabs').hidden = !inApp;
   document.getElementById('setBtn').hidden = !inApp;
@@ -263,12 +289,17 @@ function inviteCard() {
     <div class="codebox" style="margin-top:8px"><span class="code">${esc(S.household.invite_code)}</span><button class="btn sm" data-act="shareCode">Teilen</button></div></div></div>`;
 }
 
+function checkBtn(t, extra = '') {
+  if (t.chain?.locked) return `<span class="check locked" title="Erst „${esc(t.chain.pred.name)}“ erledigen" ${extra}>${svg('lock')}</span>`;
+  return `<button class="check" data-act="done" data-tid="${t.id}" aria-label="${esc(t.name)} erledigt" ${extra}>${svg('check')}</button>`;
+}
 function taskRow(it, key = '') {
   const t = it.t, r = roomOf(t.room_id), open = S.openTips.has(t.id + key);
-  return `<div class="trow" data-row="${t.id}">
-    <button class="check" data-act="done" data-tid="${t.id}" aria-label="${esc(t.name)} erledigt">${svg('check')}</button>
-    <div class="tmain"><div class="tname">${esc(t.name)}</div>
-      <div class="tmeta"><span>${esc(r?.name || '')}</span><span class="num">${t.minutes} Min</span><span class="num">${pts(t)} P</span>${it.overdue ? dueLabel(t) : ''}</div></div>
+  const meta = it.waiting ? dueLabel(t) : it.overdue ? dueLabel(t) : (key === 's' ? dueLabel(t) : '');
+  return `<div class="trow ${it.waiting ? 'waiting' : ''}" data-row="${t.id}">
+    ${checkBtn(t)}
+    <div class="tmain"><div class="tname">${t.one_off ? `<span class="tag">${svg('bolt')}spontan</span>` : ''}${esc(t.name)}</div>
+      <div class="tmeta"><span>${esc(r?.name || '')}</span><span class="num">${t.minutes} Min</span><span class="num">${pts(t)} P</span>${meta}</div></div>
     <button class="who" data-act="assign" data-tid="${t.id}" aria-label="Zuständig: ${esc(nameOf(it.who))}">${av(it.who)}</button>
     ${t.tip ? `<button class="tipbtn" data-act="tip" data-tid="${t.id}${key}" aria-expanded="${open}" aria-label="Putztipp">${svg('bulb')}</button>` : '<span></span>'}
     ${open ? `<div class="tipbox">${esc(t.tip)}</div>` : ''}
@@ -313,9 +344,35 @@ function renderToday() {
     ${[['all', 'Alle'], ['me', 'Meine'], ...(others.length ? [['other', otherLabel]] : []), ['open', 'Zum Aussuchen']].map(([k, l]) => `<button class="chip" data-act="filter" data-f="${k}" aria-pressed="${f === k}">${esc(l)}<span class="c num">${counts[k]}</span></button>`).join('')}
   </div>
   <div class="card list">${shown.length ? shown.map(it => taskRow(it)).join('') : `<div class="empty"><b>${today.length ? 'Hier ist gerade nichts' : 'Alles erledigt'}</b>${today.length ? 'Schau in einem anderen Filter nach.' : 'Morgen geht es weiter. Im Wochenplan siehst du, was ansteht.'}</div>`}</div>
+  ${nextUpCard(today)}
+  <button class="btn sec" data-act="spontan" style="width:100%">${svg('bolt')}Spontane Aufgabe</button>
+  ${spareSection()}
   ${doneToday.length ? `<div class="section"><button class="spread" data-act="toggleDone"><h2>Heute erledigt <span class="muted num" style="font-weight:500">${doneToday.length}</span></h2><span class="link">${S.showDone ? 'Ausblenden' : 'Anzeigen'}</span></button>
     ${S.showDone ? `<div class="card list">${doneToday.map(d => `<div class="hist">${av(d.by, 1)}<div><div>${esc(d.task_name)}</div><div class="tmeta">${esc(roomOf(d.room_id)?.name || '')} · +${d.points} P</div></div><button class="link" data-act="undo" data-did="${d.id}">Rückgängig</button></div>`).join('')}</div>` : ''}</div>` : ''}
   ${tipT ? `<div class="tipday">${svg('bulb')}<div><div class="eyebrow" style="color:inherit">Putztipp des Tages · ${esc(tipT.name)}</div><p>${esc(tipT.tip)}</p></div></div>` : ''}`;
+}
+
+/** Folgeaufgaben, die nach einer heutigen Aufgabe drankommen. */
+function nextUpCard(today) {
+  const ids = new Set(today.map(i => i.t.id));
+  const next = S.tasks.filter(t => t.chain && !t.chain.triggered && ids.has(t.after_task));
+  if (!next.length) return '';
+  return `<div class="section"><div class="eyebrow">Kommt danach</div><div class="card list">${next.map(t => `<div class="trow waiting">${checkBtn(t)}
+    <div class="tmain"><div class="tname">${esc(t.name)}</div><div class="tmeta"><span>${esc(roomOf(t.room_id)?.name || '')}</span><span>${dueLabel(t)}</span></div></div><span></span><span></span></div>`).join('')}</div></div>`;
+}
+
+/** Aufgaben der nächsten Tage zum Vorziehen, gefiltert nach verfügbarer Zeit. */
+function spareSection() {
+  const P = plan(4), seen = new Set(P[0].map(i => i.t.id));
+  let items = [];
+  for (let d = 1; d < P.length; d++) for (const it of P[d]) if (it.k === 0 && !seen.has(it.t.id) && !it.t.chain) { seen.add(it.t.id); items.push(it); }
+  const all = items.length;
+  if (S.spare) items = items.filter(i => +i.t.minutes <= S.spare);
+  if (!all) return '';
+  return `<div class="section"><button class="spread" data-act="toggleSpare"><h2>Zeit übrig? <span class="muted num" style="font-weight:500">${all}</span></h2><span class="link">${S.showSpare ? 'Ausblenden' : 'Vorziehen'}</span></button>
+    ${S.showSpare ? `<div class="muted" style="font-size:13px">Was in den nächsten drei Tagen ansteht. Abhaken zählt sofort, der Rhythmus startet ab heute neu.</div>
+    <div class="chips" role="group" aria-label="Zeit">${[[0, 'Egal'], [5, '5 Min'], [15, '15 Min'], [30, '30 Min']].map(([k, l]) => `<button class="chip" data-act="spare" data-m="${k}" aria-pressed="${S.spare === k}">${k ? 'bis ' : ''}${l}</button>`).join('')}</div>
+    <div class="card list">${items.length ? items.map(it => taskRow(it, 's')).join('') : '<div class="empty">Nichts so Kurzes dabei. Wähle mehr Zeit.</div>'}</div>` : ''}</div>`;
 }
 
 function renderWeek() {
@@ -335,7 +392,7 @@ function renderWeek() {
     const byP = {}; items.forEach(it => { const k = it.who || 'open'; byP[k] = (byP[k] || 0) + (+it.t.minutes || 0); });
     return `<div class="day"><div class="dayhead"><h3>${d === 0 ? 'Heute' : d === 1 ? 'Morgen' : WDL[dt.getDay()]}</h3><span class="muted" style="font-size:13px">${WD[dt.getDay()]} ${dt.getDate()}.${dt.getMonth() + 1}.</span>
       <span class="tot">${ps.map(p => byP[p.id] ? `<span class="row" style="gap:4px">${av(p.id, 1)}<span class="num">${byP[p.id]}′</span></span>` : '').join('')}${byP.open ? `<span class="row" style="gap:4px">${av(null, 1)}<span class="num">${byP.open}′</span></span>` : ''}</span></div>
-      <div class="card">${items.length ? items.map(it => `<div class="mini"><div class="tmain"><div class="tname">${esc(it.t.name)}</div><div class="tmeta"><span>${esc(roomOf(it.t.room_id)?.name || '')}</span><span class="num">${it.t.minutes} Min</span>${it.overdue ? '<span class="due-over">überfällig</span>' : ''}</div></div>${d === 0 ? `<button class="check" data-act="done" data-tid="${it.t.id}" aria-label="Erledigt" style="width:26px;height:26px">${svg('check')}</button>` : '<span></span>'}<button data-act="assign" data-tid="${it.t.id}" ${d > 0 ? 'disabled' : ''} aria-label="Zuständig">${av(it.who, 1)}</button></div>`).join('') : '<div class="empty" style="padding:12px">Freier Tag</div>'}</div></div>`;
+      <div class="card">${items.length ? items.map(it => `<div class="mini"><div class="tmain"><div class="tname">${esc(it.t.name)}</div><div class="tmeta"><span>${esc(roomOf(it.t.room_id)?.name || '')}</span><span class="num">${it.t.minutes} Min</span>${it.overdue ? '<span class="due-over">überfällig</span>' : ''}</div></div>${d === 0 ? checkBtn(it.t, 'style="width:26px;height:26px"') : '<span></span>'}<button data-act="assign" data-tid="${it.t.id}" ${d > 0 ? 'disabled' : ''} aria-label="Zuständig">${av(it.who, 1)}</button></div>`).join('') : '<div class="empty" style="padding:12px">Freier Tag</div>'}</div></div>`;
   }).join('')}`;
 }
 
@@ -358,17 +415,17 @@ function renderRooms() {
 
 function renderRoom() {
   const r = roomOf(S.roomId); if (!r) { S.view = 'rooms'; return renderRooms(); }
-  const ts = S.tasks.filter(t => t.room_id === r.id).sort((a, b) => dueAt(a) - dueAt(b));
+  const ts = S.tasks.filter(t => t.room_id === r.id && !isHidden(t)).sort((a, b) => dueAt(a) - dueAt(b) || a.name.localeCompare(b.name));
   const c = roomClean(r.id);
   return `
   <div class="spread"><button class="back" data-act="go" data-v="rooms">${svg('back')}Räume</button><button class="btn sec sm" data-act="editRoom">${svg('edit')}Bearbeiten</button></div>
   <div class="row" style="gap:14px"><span class="ricon" style="width:52px;height:52px">${svg(r.type)}</span><div style="flex:1;min-width:0"><h1 style="font-size:26px">${esc(r.name)}</h1><div class="row"><div class="bar ${cls(c)}" style="flex:1"><i style="width:${c * 100}%"></i></div><b class="num">${Math.round(c * 100)}%</b></div></div></div>
   <div class="row" style="flex-wrap:wrap"><button class="btn sm" data-act="addTask">${svg('plus')}Aufgabe</button>${ts.length ? `<button class="btn sec sm" data-act="roomAll">Alles erledigt</button>` : ''}</div>
-  <div class="card list">${ts.length ? ts.map(t => { const tc = cleanOf(t, NOW()); return `<div class="trow">
-      <button class="check" data-act="done" data-tid="${t.id}" aria-label="Erledigt">${svg('check')}</button>
-      <button class="tmain" data-act="editTask" data-tid="${t.id}" style="text-align:left"><div class="tname">${esc(t.name)}</div><div class="tmeta"><span>${freqLabel(t.freq)}</span><span class="num">${t.minutes} Min</span><span>${dueLabel(t)}</span></div>
+  <div class="card list">${ts.length ? ts.map(t => { const tc = cleanOf(t, NOW()); return `<div class="trow ${t.chain?.locked ? 'waiting' : ''}">
+      ${checkBtn(t)}
+      <button class="tmain" data-act="editTask" data-tid="${t.id}" style="text-align:left"><div class="tname">${t.one_off ? `<span class="tag">${svg('bolt')}spontan</span>` : ''}${esc(t.name)}</div><div class="tmeta"><span>${t.chain ? `${svg('link', 'width="12" height="12" style="vertical-align:-1px"')} nach „${esc(t.chain.pred.name)}“` : t.one_off ? 'einmalig' : freqLabel(t.freq)}</span><span class="num">${t.minutes} Min</span>${t.chain && !t.chain.triggered ? '' : `<span>${dueLabel(t)}</span>`}</div>
         <div class="bar ${cls(tc)}" style="height:4px;margin-top:6px;max-width:160px"><i style="width:${tc * 100}%"></i></div></button>
-      <span class="muted" style="font-size:12px;text-align:right">${t.mode === 'fixed' ? av(t.person, 1) : MODES[t.mode || 'fair'].split(' ')[0]}</span>
+      <span class="muted" style="font-size:12px;text-align:right">${t.mode === 'fixed' ? av(t.person, 1) : (t.chain && t.mode !== 'open') ? 'Folgt' : MODES[t.mode || 'fair'].split(' ')[0]}</span>
       ${t.tip ? `<button class="tipbtn" data-act="tip" data-tid="${t.id}r" aria-expanded="${S.openTips.has(t.id + 'r')}" aria-label="Putztipp">${svg('bulb')}</button>` : '<span></span>'}
       ${S.openTips.has(t.id + 'r') ? `<div class="tipbox">${esc(t.tip)}</div>` : ''}</div>`; }).join('') : `<div class="empty"><b>Noch keine Aufgaben</b>Tippe auf „Aufgabe“, um Vorschläge für diesen Raum zu sehen.</div>`}</div>`;
 }
@@ -554,10 +611,19 @@ function taskForm(t, roomId) {
   const rooms = [...S.rooms].sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   const custom = !FREQS.some(f => f[0] === t.freq);
   const per = t.person && member(t.person) ? t.person : S.meId;
+  // Mögliche Vorgänger: alle Aufgaben außer dieser selbst und ihren eigenen Folgeaufgaben (sonst entstünde ein Kreis).
+  const blocked = new Set(isNew ? [] : [t.id]);
+  for (let grew = true; grew;) { grew = false; for (const x of S.tasks) if (x.after_task && blocked.has(x.after_task) && !blocked.has(x.id)) { blocked.add(x.id); grew = true; } }
+  const candidates = S.tasks.filter(x => !blocked.has(x.id) && !x.one_off).sort((a, b) => ((roomOf(a.room_id)?.sort ?? 0) - (roomOf(b.room_id)?.sort ?? 0)) || a.name.localeCompare(b.name));
+  const after = t.after_task || '';
   return `<div class="field"><label for="tName">Aufgabe</label><input type="text" id="tName" value="${esc(t.name)}" maxlength="80" placeholder="z. B. Fenster putzen"></div>
     <div class="grid2"><div class="field"><label for="tRoom">Raum</label><select id="tRoom">${rooms.map(r => `<option value="${r.id}" ${r.id === t.room_id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
-      <div class="field"><label for="tFreq">Wie oft</label><select id="tFreq">${FREQS.map(([n, l]) => `<option value="${n}" ${n === t.freq ? 'selected' : ''}>${l}</option>`).join('')}<option value="custom" ${custom ? 'selected' : ''}>Eigener Rhythmus …</option></select></div></div>
-    <div class="field" id="tCustomWrap" ${custom ? '' : 'hidden'}><label for="tCustom">Alle wie viele Tage?</label><input type="number" id="tCustom" min="1" max="365" value="${t.freq}"></div>
+      <div class="field" id="tFreqWrap" ${after ? 'hidden' : ''}><label for="tFreq">Wie oft</label><select id="tFreq">${FREQS.map(([n, l]) => `<option value="${n}" ${n === t.freq ? 'selected' : ''}>${l}</option>`).join('')}<option value="custom" ${custom ? 'selected' : ''}>Eigener Rhythmus …</option></select></div></div>
+    <div class="field" id="tCustomWrap" ${custom && !after ? '' : 'hidden'}><label for="tCustom">Alle wie viele Tage?</label><input type="number" id="tCustom" min="1" max="365" value="${t.freq}"></div>
+    <div class="field"><label for="tAfter">${svg('link', 'width="14" height="14" style="vertical-align:-2px"')} Kommt nach</label>
+      <div class="grid2"><select id="tAfter"><option value="">Keiner Aufgabe (eigener Rhythmus)</option>${candidates.map(x => `<option value="${x.id}" ${x.id === after ? 'selected' : ''}>${esc(roomOf(x.room_id)?.name || '')} · ${esc(x.name)}</option>`).join('')}</select>
+        <select id="tDelay" aria-label="Wartezeit" ${after ? '' : 'hidden'}>${DELAYS.map(([m, l]) => `<option value="${m}" ${m === (+t.after_delay_min || 0) ? 'selected' : ''}>${m ? 'nach ' + l : 'sofort danach'}</option>`).join('')}</select></div>
+      <div class="muted" style="font-size:13px" id="tAfterHelp">${after ? 'Wird erst fällig, wenn die andere Aufgabe erledigt ist. Geht normalerweise an die Person, die sie erledigt hat.' : 'Zum Beispiel: „Wäsche aufhängen“ kommt 2 Stunden nach „Wäsche waschen“.'}</div></div>
     <div class="grid2"><div class="field"><label for="tMin">Dauer (Minuten)</label><input type="number" id="tMin" min="1" max="600" value="${t.minutes}"></div>
       <div class="field"><label for="tPts">Punkte</label><input type="number" id="tPts" min="0" max="999" value="${t.points ?? ''}" placeholder="= Minuten"></div></div>
     <div class="field"><span class="lbl">Verteilung</span><div class="opts" id="tModes">${Object.entries(MODES).map(([k, l]) => `<button class="opt" data-act="pickMode" data-m="${k}" aria-pressed="${(t.mode || 'fair') === k}">${l}</button>`).join('')}</div>
@@ -599,9 +665,36 @@ function newTask(tpl, roomId, hid, mode, stagger) {
   return row;
 }
 
+/** Verknüpft neue Vorschläge wie „Wäsche aufhängen“ automatisch mit ihrem Vorgänger. */
+function linkChains(rows, existing) {
+  const pool = [...rows, ...existing];
+  for (const r of rows) {
+    const c = CHAINS[r.name]; if (!c) continue;
+    const pred = pool.find(x => x.name === c[0] && x.id !== r.id);
+    if (pred) { r.after_task = pred.id; r.after_delay_min = c[1]; r.last_done = iso(Date.now()); }
+  }
+}
+
+function spontanSheet() {
+  const rooms = [...S.rooms].sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
+  const others = members().filter(m => m.id !== S.meId);
+  openSheet(`<h2>Spontane Aufgabe</h2><div class="muted" style="margin-top:-8px">Für Dringendes, das nicht im Plan steht. Steht sofort auf Heute und verschwindet nach dem Abhaken.</div>
+    <div class="field"><label for="sName">Was ist zu tun?</label><input type="text" id="sName" maxlength="80" placeholder="z. B. Rotweinfleck auf dem Sofa"></div>
+    <div class="grid2"><div class="field"><label for="sRoom">Raum</label><select id="sRoom">${rooms.map(r => `<option value="${r.id}" ${r.id === S.roomId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="sMin">Dauer (Minuten)</label><input type="number" id="sMin" min="1" max="600" value="10"></div></div>
+    <div class="field"><span class="lbl">Wer?</span><div class="opts" id="sWho">
+      <button class="opt" data-act="pickWho" data-pid="${S.meId}" aria-pressed="true">${av(S.meId, 1)}Ich</button>
+      ${others.map(p => `<button class="opt" data-act="pickWho" data-pid="${p.id}" aria-pressed="false">${av(p.id, 1)}${esc(p.name)}</button>`).join('')}
+      <button class="opt" data-act="pickWho" data-pid="" aria-pressed="false">${av(null, 1)}Offen</button></div></div>
+    <div class="actions"><button class="btn" data-act="saveSpontan">${svg('bolt')}Auf Heute setzen</button></div>`);
+  setTimeout(() => document.getElementById('sName')?.focus(), 250);
+}
+
 async function complete(tid, by, quiet) {
   by = by || S.meId;
   const t = taskOf(tid); if (!t || S.busy.has(tid)) return;
+  annotate(S.tasks, Date.now());
+  if (t.chain?.locked) { if (!quiet) toast(`Erst „${esc(t.chain.pred.name)}“ erledigen`); return; }
   S.busy.add(tid);
   if (!quiet) {
     document.querySelectorAll(`[data-act="done"][data-tid="${tid}"]`).forEach(b => { b.classList.add('on'); b.closest('.trow,.mini')?.classList.add('gone'); });
@@ -635,7 +728,9 @@ function readTaskForm() {
   return {
     name: document.getElementById('tName').value.trim(), room_id: document.getElementById('tRoom').value, freq,
     minutes: clamp(parseInt(document.getElementById('tMin').value) || 5, 1, 600), points: ptsV === '' ? null : clamp(parseInt(ptsV) || 0, 0, 999),
-    mode, person, tip: document.getElementById('tTip').value.trim()
+    mode, person, tip: document.getElementById('tTip').value.trim(),
+    after_task: document.getElementById('tAfter').value || null,
+    after_delay_min: document.getElementById('tAfter').value ? +document.getElementById('tDelay').value || 0 : 0
   };
 }
 
@@ -686,6 +781,13 @@ function updateBadge() {
 
 document.addEventListener('change', e => {
   if (e.target.id === 'tFreq') document.getElementById('tCustomWrap').hidden = e.target.value !== 'custom';
+  if (e.target.id === 'tAfter') {
+    const on = !!e.target.value;
+    document.getElementById('tDelay').hidden = !on;
+    document.getElementById('tFreqWrap').hidden = on;
+    document.getElementById('tCustomWrap').hidden = on || document.getElementById('tFreq').value !== 'custom';
+    document.getElementById('tAfterHelp').textContent = on ? 'Wird erst fällig, wenn die andere Aufgabe erledigt ist. Geht normalerweise an die Person, die sie erledigt hat.' : 'Zum Beispiel: „Wäsche aufhängen“ kommt 2 Stunden nach „Wäsche waschen“.';
+  }
   if (e.target.id === 'remindHour') { const v = e.target.value; mutate({ k: 'update', table: 'members', id: S.meId, patch: { remind_hour: v === '' ? null : +v } }); toast(v === '' ? 'Morgen-Erinnerung aus' : `Erinnerung um ${v}:00 Uhr`); }
   if (e.target.id === 'jCode') e.target.value = e.target.value.toUpperCase();
 });
@@ -723,15 +825,36 @@ document.addEventListener('click', async e => {
     case 'saveTask': {
       const v = readTaskForm(); if (!v.name) { document.getElementById('tName').focus(); return; }
       const id = el.dataset.tid;
+      // Neu verknüpft: erst beim nächsten Erledigen des Vorgängers fällig werden, nicht rückwirkend.
+      if (v.after_task && (!id || taskOf(id)?.after_task !== v.after_task)) v.last_done = iso(Date.now());
       if (id) mutate({ k: 'update', table: 'tasks', id, patch: v });
-      else mutate({ k: 'upsert', table: 'tasks', row: { id: uuid(), household_id: HID(), ...v, last_done: null, last_by: null, claimed_by: null, created_at: iso(Date.now()) } });
+      else mutate({ k: 'upsert', table: 'tasks', row: { id: uuid(), household_id: HID(), one_off: false, ...v, last_done: v.last_done ?? null, last_by: null, claimed_by: null, created_at: iso(Date.now()) } });
       closeSheet(); toast(id ? 'Gespeichert' : 'Aufgabe angelegt'); break;
+    }
+    case 'toggleSpare': S.showSpare = !S.showSpare; render(); break;
+    case 'spare': S.spare = +el.dataset.m; render(); break;
+    case 'spontan': spontanSheet(); break;
+    case 'pickWho': press(document.getElementById('sWho'), el); break;
+    case 'saveSpontan': {
+      const name = document.getElementById('sName').value.trim(); if (!name) { document.getElementById('sName').focus(); return; }
+      const who = document.querySelector('#sWho [aria-pressed="true"]')?.dataset.pid || '';
+      const row = { id: uuid(), household_id: HID(), room_id: document.getElementById('sRoom').value, name, freq: 1,
+        minutes: clamp(parseInt(document.getElementById('sMin').value) || 10, 1, 600), points: null,
+        mode: who ? 'fixed' : 'open', person: who || null, tip: '', one_off: true, after_task: null, after_delay_min: 0,
+        last_done: null, last_by: null, claimed_by: null, created_at: iso(Date.now()) };
+      mutate({ k: 'upsert', table: 'tasks', row });
+      closeSheet();
+      if (who && who !== S.meId) { toast(`${esc(nameOf(who))} bekommt die Aufgabe`); setTimeout(() => callFn({ action: 'handover', task_id: row.id, to: who }), 1500); }
+      else toast('Steht jetzt auf Heute');
+      break;
     }
     case 'delTask': if (!confirmStep(el, 'Wirklich löschen?')) return; mutate({ k: 'delete', table: 'tasks', id: el.dataset.tid }); closeSheet(); toast('Aufgabe gelöscht'); break;
     case 'addSugg': {
       const picked = [...document.querySelectorAll('[data-sug]:checked')].map(x => suggestions[+x.dataset.sug]);
       if (!picked.length) return;
-      mutate({ k: 'upsert', table: 'tasks', rows: picked.map(s => newTask(s, S.roomId, HID(), S.household.default_mode)) });
+      const rows = picked.map(s => newTask(s, S.roomId, HID(), S.household.default_mode));
+      linkChains(rows, S.tasks.filter(t => t.room_id === S.roomId));
+      mutate({ k: 'upsert', table: 'tasks', rows });
       closeSheet(); toast(`${picked.length} ${picked.length === 1 ? 'Aufgabe' : 'Aufgaben'} hinzugefügt`); break;
     }
     case 'roomAll': {
@@ -820,21 +943,36 @@ async function joinHousehold(btn) {
 }
 
 /* ---------- Start ---------- */
+/* ---------- Yacht beim ersten Öffnen am Tag ---------- */
+const splash = document.getElementById('splash');
+function hideSplash() {
+  if (!splash || splash.hidden || splash.classList.contains('out')) return;
+  splash.classList.add('out'); setTimeout(() => splash.remove(), 500);
+}
+function splashReady() {
+  if (!splash || splash.hidden) return;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const wait = Math.max(0, (reduced ? 900 : 2000) - (Date.now() - (+splash.dataset.t || 0)));
+  setTimeout(hideSplash, wait);
+}
+if (splash && !splash.hidden) { splash.addEventListener('click', hideSplash); setTimeout(hideSplash, 4500); }
+
 (async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (DEMO) {
     if (loadCache()) S.phase = 'app'; else S.phase = 'onboard';
-    render(); return;
+    render(); splashReady(); return;
   }
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') { S.phase = 'auth'; S.authMode = 'newpw'; S.authErr = ''; S.authMsg = ''; render(); }
     else if (event === 'SIGNED_OUT') { S.phase = 'auth'; render(); }
   });
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) { S.phase = 'auth'; render(); return; }
+  if (!session) { S.phase = 'auth'; render(); splashReady(); return; }
   S.uid = session.user.id; S.email = session.user.email || '';
-  if (loadCache(S.uid)) { outbox.forEach(applyLocal); S.phase = 'app'; render(); }
+  if (loadCache(S.uid)) { outbox.forEach(applyLocal); S.phase = 'app'; render(); splashReady(); }
   await refetch();
+  splashReady();
   if (S.phase === 'loading') { S.phase = 'auth'; S.authErr = 'Keine Verbindung. Prüfe dein Internet.'; render(); }
   flush(); checkPush();
   window.addEventListener('online', () => { S.online = true; flush(); refetch(); });

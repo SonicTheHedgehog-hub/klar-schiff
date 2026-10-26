@@ -236,3 +236,37 @@ input[type=email],input[type=password]{width:100%;padding:11px 12px;border:1px s
 .sync.off i{background:var(--warn)}
 .sync.wait i{background:var(--sky-solid)}
 select.inline{width:auto;padding:7px 10px}
+
+/* --- v3: Folgeaufgaben, spontane Aufgaben, Yacht beim Start --- */
+.check.locked{border-style:dashed;color:var(--muted);cursor:not-allowed}
+.check.locked svg{width:15px;height:15px}
+.trow.waiting .tname{color:var(--muted)}
+.tag{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--rose);color:var(--rose-ink);border-radius:6px;padding:1px 6px;margin-right:6px;vertical-align:2px}
+.tag svg{width:11px;height:11px}
+
+#splash{position:fixed;inset:0;z-index:50;background:var(--sky);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:env(safe-area-inset-top,0px) 24px env(safe-area-inset-bottom,0px);cursor:pointer;transition:opacity .45s ease,transform .45s ease}
+#splash.out{opacity:0;transform:scale(1.03);pointer-events:none}
+#splash .sea{width:min(360px,88vw);height:auto;overflow:visible}
+#splash .splash-name{font-family:var(--display);font-weight:700;font-size:34px;color:var(--fg);letter-spacing:-.01em;animation:rise .6s .35s both ease-out}
+#splash .splash-sub{font-size:15px;color:var(--sky-ink);font-weight:600;animation:rise .6s .55s both ease-out}
+#splash .sun circle{fill:var(--rose-solid);opacity:.8}
+#splash .bird path{fill:none;stroke:var(--sky-ink);stroke-width:2.4;stroke-linecap:round;opacity:.7}
+#splash .bird{animation:glide 3s ease-in-out infinite alternate}
+#splash .wave path{transform-box:fill-box}
+#splash .wave.back path{fill:var(--sky-solid);opacity:.55;animation:roll 3.2s linear infinite}
+#splash .wave.front path{fill:var(--primary);animation:roll 2.2s linear infinite reverse}
+#splash .hull{fill:#FFFFFF;stroke:var(--primary);stroke-width:3;stroke-linejoin:round}
+#splash .cabin{fill:#FFFFFF;stroke:var(--primary);stroke-width:2.5}
+#splash .porthole{fill:var(--sky-solid)}
+#splash .mast{stroke:var(--primary);stroke-width:3.5;stroke-linecap:round}
+#splash .main{fill:var(--rose-solid);stroke:var(--primary);stroke-width:2.5;stroke-linejoin:round}
+#splash .jib{fill:#FFFFFF;stroke:var(--primary);stroke-width:2.5;stroke-linejoin:round}
+#splash .flag{fill:var(--rose-ink)}
+#splash .boat-move{animation:sail 1.6s cubic-bezier(.2,.7,.3,1) both}
+#splash .boat{transform-origin:180px 160px;animation:bob 1.3s ease-in-out infinite alternate}
+@keyframes roll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes sail{from{transform:translateX(-170px)}to{transform:translateX(0)}}
+@keyframes bob{from{transform:translateY(-3px) rotate(-3deg)}to{transform:translateY(4px) rotate(3deg)}}
+@keyframes glide{from{transform:translate(0,0)}to{transform:translate(14px,-6px)}}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){#splash *{animation:none!important}}

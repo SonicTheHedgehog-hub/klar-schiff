@@ -19,6 +19,9 @@ export const TYPES = {
     ['Handtücher wechseln',7,5,'Handtücher bei 60 °C waschen und ohne Weichspüler, dann saugen sie besser.',1],
     ['Boden wischen',7,10,'Haare vorher mit einem leicht feuchten Tuch einsammeln, der Staubsauger verteilt sie sonst nur.',0],
     ['Abfluss reinigen',30,10,'2 EL Natron und eine Tasse Essig in den Abfluss, 15 Minuten warten, mit heißem Wasser nachspülen.',0],
+    ['Wäsche waschen',3,5,'Ein Schuss Essig ins Weichspülerfach macht Handtücher weicher und entkalkt die Maschine nebenbei.',0],
+    ['Wäsche aufhängen',3,10,'Gleich nach dem Waschgang aufhängen und jedes Teil kräftig ausschütteln, dann muss weniger gebügelt werden.',0],
+    ['Wäsche abnehmen & zusammenlegen',3,15,'Direkt beim Abnehmen falten und nach Personen sortieren, das spart einen zweiten Durchgang.',0],
     ['Fugen schrubben',60,30,'Alte Zahnbürste und Paste aus Natron und Wasser. Bei Schimmel lieber zu einem Chlorreiniger greifen und lüften.',0]]},
   bed:{label:'Schlafzimmer', tasks:[
     ['Staubsaugen',7,10,'Unters Bett mit der Fugendüse. Dort sammelt sich der meiste Staub.',1],
@@ -66,3 +69,10 @@ export const USER_ROOMS = [['Küche','kitchen'],['Badezimmer','bath'],['Schlafzi
 export const FREQS = [[1,'täglich'],[2,'alle 2 Tage'],[3,'alle 3 Tage'],[4,'alle 4 Tage'],[7,'wöchentlich'],[14,'alle 2 Wochen'],[30,'monatlich'],[60,'alle 2 Monate'],[90,'vierteljährlich'],[180,'halbjährlich']];
 export const MODES = {fair:'Fair nach Punkten',rotate:'Abwechselnd',fixed:'Fest zugeteilt',open:'Offen zum Aussuchen'};
 export const MODE_HELP = {fair:'Die App gibt die Aufgabe der Person, die gerade weniger Punkte gesammelt hat.',rotate:'Wer es zuletzt gemacht hat, ist beim nächsten Mal nicht dran.',fixed:'Immer dieselbe Person.',open:'Niemand ist zugeteilt. Wer zuerst „Ich mach’s“ tippt, übernimmt sie.'};
+
+// Vorschläge, die automatisch als Folgeaufgabe verknüpft werden: Name → [Vorgänger, Wartezeit in Minuten]
+export const CHAINS = {
+  'Wäsche aufhängen': ['Wäsche waschen', 120],
+  'Wäsche abnehmen & zusammenlegen': ['Wäsche aufhängen', 1440]
+};
+export const DELAYS = [[0,'sofort'],[30,'30 Min'],[60,'1 Std'],[90,'1,5 Std'],[120,'2 Std'],[180,'3 Std'],[240,'4 Std'],[480,'8 Std'],[1440,'1 Tag'],[2880,'2 Tage']];

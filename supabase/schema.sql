@@ -49,6 +49,12 @@ create table if not exists public.tasks (
   created_at   timestamptz not null default now()
 );
 
+-- Folgeaufgaben und spontane Aufgaben (v3)
+alter table public.tasks add column if not exists after_task uuid references public.tasks(id) on delete set null;
+alter table public.tasks add column if not exists after_delay_min int not null default 0 check (after_delay_min between 0 and 20160);
+alter table public.tasks add column if not exists one_off boolean not null default false;
+alter table public.tasks add column if not exists ready_notified_at timestamptz;
+
 create table if not exists public.completions (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households(id) on delete cascade,
